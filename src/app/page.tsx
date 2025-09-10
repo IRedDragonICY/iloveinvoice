@@ -25,13 +25,12 @@ import {
 } from "lucide-react";
 
 /**
- * EZinvoice — mobile-first invoice generator
+ * ILoveInvoice — mobile-first invoice generator
  * - Next.js + Tailwind CSS (Material You vibes)
  * - LocalStorage persistence (company, products, invoices, settings)
  * - Invoice history (edit/delete), auto-save
- * - Optional phone/email on invoice
  * - Invoice-level tax (not per-item)
- * - Export to PDF via jsPDF + html2canvas-pro (multi-page, crisp)
+ * - Export to PDF via jsPDF + html2canvas-pro (multi-page, crisp, better UX)
  * - Bottom navigation, light/dark mode, animations
  *
  * Notes:
@@ -55,7 +54,6 @@ type Product = {
   name: string;
   description?: string;
   price: number;
-  tax?: number; // legacy, ignored
 };
 
 type InvoiceItem = {
@@ -65,7 +63,6 @@ type InvoiceItem = {
   description?: string;
   quantity: number;
   price: number;
-  tax?: number; // legacy, ignored
 };
 
 type Customer = {
@@ -89,10 +86,11 @@ type Settings = {
   theme: ThemeMode;
   accent: AccentKey;
   currency: "IDR" | "USD" | "EUR" | "SGD" | "JPY";
-  showTax: boolean;        // show invoice-level tax on totals
+  showTax: boolean;        // show invoice-level tax row
   taxPercent: number;      // invoice-level tax percent (applies to subtotal)
   showCompanyPhone: boolean;
   showCompanyEmail: boolean;
+  invoiceFooter: string;   // custom footer text
 };
 
 const STORAGE = {
@@ -120,6 +118,7 @@ const DEFAULTS = {
     taxPercent: 10,
     showCompanyPhone: true,
     showCompanyEmail: true,
+    invoiceFooter: "Terimakasih sudah berbelanja",
   } as Settings,
 };
 
@@ -217,10 +216,13 @@ function usePersistentState<T>(key: string, initial: T) {
       const raw = typeof window !== "undefined" ? localStorage.getItem(key) : null;
       if (raw) {
         const parsed = JSON.parse(raw);
-        // simple migration: if old defaultTaxPercent exists, map to taxPercent
+        // migration: old defaultTaxPercent -> taxPercent
         if (key === STORAGE.settings && parsed && typeof parsed === "object") {
           if (parsed.defaultTaxPercent != null && parsed.taxPercent == null) {
             parsed.taxPercent = parsed.defaultTaxPercent;
+          }
+          if (parsed.invoiceFooter == null) {
+            parsed.invoiceFooter = DEFAULTS.settings.invoiceFooter;
           }
         }
         setState(parsed);
@@ -289,7 +291,7 @@ function generateInvoiceNumber() {
   const mon = String(d.getMonth() + 1).padStart(2, "0");
   const yr = d.getFullYear();
   const rnd = Math.floor(Math.random() * 900 + 100);
-  return `EZ-${yr}${mon}${day}-${rnd}`;
+  return `ILI-${yr}${mon}${day}-${rnd}`;
 }
 
 function createNewInvoice(): Invoice {
@@ -315,7 +317,7 @@ function useDebounced<T>(value: T, delay = 200) {
   return v;
 }
 
-export default function EZinvoice() {
+export default function ILoveInvoice() {
   const [settings, setSettings, settingsReady] = usePersistentState<Settings>(STORAGE.settings, DEFAULTS.settings);
   const [company, setCompany, companyReady] = usePersistentState<Company>(STORAGE.company, DEFAULTS.company);
   const [products, setProducts, productsReady] = usePersistentState<Product[]>(STORAGE.products, DEFAULTS.products);
@@ -505,13 +507,13 @@ export default function EZinvoice() {
     return list.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [invoices, debouncedHistoryQuery]);
 
-  // PDF export (improved UX: toast after overlay ends; lazy mount capture node; small perf tweaks)
+  // PDF export (improved UX)
   const pdfRef = useRef<HTMLDivElement>(null);
   async function onExportPDF() {
     if (!currentInvoice) return;
     try {
       setExporting(true);
-      // wait for hidden capture area to mount and paint
+      // allow mount and paint of hidden node
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
       const sourceNode = pdfRef.current;
@@ -532,9 +534,9 @@ export default function EZinvoice() {
 
       pdf.setProperties({
         title: `Invoice ${currentInvoice.number}`,
-        subject: "EZinvoice PDF",
-        author: company.name || "EZinvoice",
-        creator: "EZinvoice",
+        subject: "ILoveInvoice PDF",
+        author: company.name || "ILoveInvoice",
+        creator: "ILoveInvoice",
       });
 
       const pageWidth = pdf.internal.pageSize.getWidth();
@@ -556,7 +558,6 @@ export default function EZinvoice() {
       }
 
       pdf.save(`${currentInvoice.number}.pdf`);
-      // overlay off first, then toast (avoid "toast shown while still loading" feel)
       setExporting(false);
       setTimeout(() => triggerToast("PDF berhasil dibuat"), 10);
     } catch (e) {
@@ -590,7 +591,7 @@ export default function EZinvoice() {
     return (
       <>
         <Head>
-          <title>EZinvoice — Loading</title>
+          <title>ILoveInvoice — Loading</title>
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         </Head>
         <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 flex items-center justify-center">
@@ -608,7 +609,7 @@ export default function EZinvoice() {
   return (
     <>
       <Head>
-        <title>EZinvoice — Invoice Generator</title>
+        <title>ILoveInvoice — Invoice Generator</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         {themeColor ? <meta name="theme-color" content={themeColor} /> : null}
       </Head>
@@ -633,7 +634,7 @@ export default function EZinvoice() {
                   <FileText className={cn("w-5 h-5", accent.text)} />
                 </motion.div>
                 <div className="flex flex-col leading-tight">
-                  <div className="font-semibold tracking-tight">EZinvoice</div>
+                  <div className="font-semibold tracking-tight">ILoveInvoice</div>
                   <div className="text-xs text-neutral-500 dark:text-neutral-400">
                     {activeTab === "invoice"
                       ? "Generator invoice • auto-save"
@@ -1362,9 +1363,14 @@ export default function EZinvoice() {
                         })
                       }
                     />
+                    <TextField
+                      label="Footer Invoice"
+                      value={settings.invoiceFooter ?? DEFAULTS.settings.invoiceFooter}
+                      onChange={(v) => setSettings({ ...settings, invoiceFooter: v })}
+                    />
                   </div>
                   <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
-                    Pajak dihitung dari subtotal seluruh item.
+                    Pajak dihitung dari subtotal seluruh item. Footer akan tampil di bagian bawah invoice.
                   </div>
                 </Card>
               </motion.div>
@@ -2097,9 +2103,14 @@ function InvoicePreview({
           </div>
         </div>
 
+        {/* Custom footer (always shown, also in PDF) */}
+        <div className="mt-8 text-xs text-neutral-700 dark:text-neutral-300 text-center">
+          {settings.invoiceFooter || DEFAULTS.settings.invoiceFooter}
+        </div>
+        {/* App signature (not printed) */}
         {!printing ? (
-          <div className="mt-10 text-[10px] text-neutral-400 text-center">
-            Dibuat dengan EZinvoice
+          <div className="mt-2 text-[10px] text-neutral-400 text-center">
+            Dibuat dengan ILoveInvoice
           </div>
         ) : null}
       </div>
