@@ -1,7 +1,5 @@
 import type { MetadataRoute } from "next";
 
-export const revalidate = 60 * 60 * 24; // 24 hours
-
 const siteUrlRaw = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 const siteUrl = siteUrlRaw.replace(/\/$/, "");
 
