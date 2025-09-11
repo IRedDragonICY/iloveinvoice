@@ -1,9 +1,6 @@
-// pages/index.tsx
 'use client';
 import Head from "next/head";
-import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas-pro";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   FileText,
@@ -24,8 +21,55 @@ import {
   Search,
   Printer,
   Percent,
-  DollarSign
+  DollarSign,
+  Edit3,
+  Copy,
+  Calendar,
+  User,
+  Receipt,
+  Archive,
+  Filter,
+  SortDesc,
+  Eye,
+  Banknote
 } from "lucide-react";
+
+// Modular imports
+import type {
+  ThemeMode,
+  AccentKey,
+  Company,
+  Product,
+  DiscountType,
+  InvoiceItem,
+  Customer,
+  Invoice,
+  Settings,
+  TabKey
+} from '@/lib/types';
+import { STORAGE, DEFAULTS, ACCENT_MAP } from '@/lib/constants';
+import { cn, formatCurrency, parseNumber, clamp } from '@/lib/utils';
+import { createNewInvoice, createBlankInvoiceItem, computeTotals } from '@/lib/invoice-utils';
+import { usePersistentState } from '@/hooks/usePersistentState';
+import { useDebounced } from '@/hooks/useDebounced';
+import { useTheme } from '@/hooks/useTheme';
+import { exportInvoiceToPDF } from '@/services/pdf-service';
+import { compressImage, formatFileSize, isValidImageFile, checkLocalStorageSpace } from '@/lib/image-utils';
+import {
+  Card,
+  Row,
+  TextField,
+  TextArea,
+  NumberField,
+  MoneyField,
+  SelectField,
+  Toggle,
+  TabButton
+} from '@/components/ui';
+import { ProductEditor } from '@/components/product/ProductEditor';
+import { ProductRow } from '@/components/product/ProductRow';
+import { InvoicePreview } from '@/components/invoice/InvoicePreview';
+import { AccentPresence } from '@/components/AccentPresence';
 
 /**
  * ILoveInvoice — mobile-first invoice generator
@@ -37,365 +81,14 @@ import {
  * - Export to PDF via jsPDF + html2canvas-pro (multi-page, crisp, better UX)
  * - Custom invoice footer
  * - Bottom navigation, light/dark mode, animations
- *
- * Setup:
- * - Tailwind darkMode: 'class'
- * - Deps: npm i jspdf html2canvas-pro framer-motion lucide-react
  */
 
-type ThemeMode = "system" | "light" | "dark";
-type AccentKey = "indigo" | "emerald" | "sky" | "amber" | "rose" | "violet" | "neutral";
-
-type Company = {
-  logoDataUrl?: string;
-  name: string;
-  address: string;
-  phone?: string;
-  email?: string;
-};
-
-type Product = {
-  id: string;
-  name: string;
-  description?: string;
-  price: number;
-};
-
-type DiscountType = "percent" | "amount";
-
-type InvoiceItem = {
-  id: string;
-  productId?: string;
-  name: string;
-  description?: string;
-  quantity: number;
-  price: number;
-
-  // per-item discount (default off)
-  discountEnabled?: boolean;
-  discountType?: DiscountType;
-  discountValue?: number;
-};
-
-type Customer = {
-  name: string;
-  address?: string;
-  phone?: string;
-  email?: string;
-};
-
-type Invoice = {
-  id: string;
-  createdAt: number;
-  updatedAt: number;
-  number: string;
-  customer: Customer;
-  items: InvoiceItem[];
-  notes?: string;
-
-  // invoice-level discount (default off)
-  invoiceDiscountEnabled?: boolean;
-  invoiceDiscountType?: DiscountType;
-  invoiceDiscountValue?: number;
-};
-
-type Settings = {
-  theme: ThemeMode;
-  accent: AccentKey;
-  currency: "IDR" | "USD" | "EUR" | "SGD" | "JPY";
-  showTax: boolean;
-  taxPercent: number;      // invoice-level tax percent (applies to subtotal after discounts)
-  showCompanyPhone: boolean;
-  showCompanyEmail: boolean;
-  invoiceFooter: string;   // custom footer text
-};
-
-const STORAGE = {
-  company: "ez_company",
-  products: "ez_products",
-  invoices: "ez_invoices",
-  currentInvoiceId: "ez_current_invoice_id",
-  settings: "ez_settings",
-};
-
-const DEFAULTS = {
-  company: {
-    name: "",
-    address: "",
-    phone: "",
-    email: "",
-    logoDataUrl: "",
-  } as Company,
-  products: [] as Product[],
-  settings: {
-    theme: "system",
-    accent: "neutral",
-    currency: "IDR",
-    showTax: true,
-    taxPercent: 10,
-    showCompanyPhone: true,
-    showCompanyEmail: true,
-    invoiceFooter: "Terimakasih sudah berbelanja",
-  } as Settings,
-};
-
-function cn(...classes: (string | undefined | false)[]) {
-  return classes.filter(Boolean).join(" ");
-}
-
-const ACCENT_MAP: Record<
-  AccentKey,
-  {
-    solid: string;
-    solidHover: string;
-    softBg: string;
-    text: string;
-    ring: string;
-    chip: string;
-  }
-> = {
-  indigo: {
-    solid: "bg-indigo-600",
-    solidHover: "hover:bg-indigo-700",
-    softBg: "bg-indigo-50 dark:bg-indigo-500/10",
-    text: "text-indigo-600",
-    ring: "focus-visible:ring-indigo-500",
-    chip: "bg-indigo-600/10 text-indigo-700 dark:text-indigo-300",
-  },
-  emerald: {
-    solid: "bg-emerald-600",
-    solidHover: "hover:bg-emerald-700",
-    softBg: "bg-emerald-50 dark:bg-emerald-500/10",
-    text: "text-emerald-600",
-    ring: "focus-visible:ring-emerald-500",
-    chip: "bg-emerald-600/10 text-emerald-700 dark:text-emerald-300",
-  },
-  sky: {
-    solid: "bg-sky-600",
-    solidHover: "hover:bg-sky-700",
-    softBg: "bg-sky-50 dark:bg-sky-500/10",
-    text: "text-sky-600",
-    ring: "focus-visible:ring-sky-500",
-    chip: "bg-sky-600/10 text-sky-700 dark:text-sky-300",
-  },
-  amber: {
-    solid: "bg-amber-600",
-    solidHover: "hover:bg-amber-700",
-    softBg: "bg-amber-50 dark:bg-amber-500/10",
-    text: "text-amber-600",
-    ring: "focus-visible:ring-amber-500",
-    chip: "bg-amber-600/10 text-amber-700 dark:text-amber-300",
-  },
-  rose: {
-    solid: "bg-rose-600",
-    solidHover: "hover:bg-rose-700",
-    softBg: "bg-rose-50 dark:bg-rose-500/10",
-    text: "text-rose-600",
-    ring: "focus-visible:ring-rose-500",
-    chip: "bg-rose-600/10 text-rose-700 dark:text-rose-300",
-  },
-  violet: {
-    solid: "bg-violet-600",
-    solidHover: "hover:bg-violet-700",
-    softBg: "bg-violet-50 dark:bg-violet-500/10",
-    text: "text-violet-600",
-    ring: "focus-visible:ring-violet-500",
-    chip: "bg-violet-600/10 text-violet-700 dark:text-violet-300",
-  },
-  neutral: {
-    solid: "bg-neutral-800",
-    solidHover: "hover:bg-neutral-900",
-    softBg: "bg-neutral-100 dark:bg-neutral-800",
-    text: "text-neutral-700 dark:text-neutral-300",
-    ring: "focus-visible:ring-neutral-500",
-    chip: "bg-neutral-700/10 text-neutral-700 dark:text-neutral-300",
-  },
-};
-
-const AccentPresence = () => (
-  <div className="hidden">
-    <div className="bg-indigo-600 hover:bg-indigo-700 bg-indigo-50 text-indigo-600 focus-visible:ring-indigo-500 bg-indigo-600/10 text-indigo-700 dark:text-indigo-300" />
-    <div className="bg-emerald-600 hover:bg-emerald-700 bg-emerald-50 text-emerald-600 focus-visible:ring-emerald-500 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300" />
-    <div className="bg-sky-600 hover:bg-sky-700 bg-sky-50 text-sky-600 focus-visible:ring-sky-500 bg-sky-600/10 text-sky-700 dark:text-sky-300" />
-    <div className="bg-amber-600 hover:bg-amber-700 bg-amber-50 text-amber-600 focus-visible:ring-amber-500 bg-amber-600/10 text-amber-700 dark:text-amber-300" />
-    <div className="bg-rose-600 hover:bg-rose-700 bg-rose-50 text-rose-600 focus-visible:ring-rose-500 bg-rose-600/10 text-rose-700 dark:text-rose-300" />
-    <div className="bg-violet-600 hover:bg-violet-700 bg-violet-50 text-violet-600 focus-visible:ring-violet-500 bg-violet-600/10 text-violet-700 dark:text-violet-300" />
-    <div className="bg-neutral-800 hover:bg-neutral-900 bg-neutral-100 text-neutral-700 focus-visible:ring-neutral-500 bg-neutral-700/10 text-neutral-700 dark:text-neutral-300" />
-  </div>
-);
-
-function usePersistentState<T>(key: string, initial: T) {
-  const [ready, setReady] = useState(false);
-  const [state, setState] = useState<T>(initial);
-
-  useEffect(() => {
-    try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem(key) : null;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        // migration helpers
-        if (key === STORAGE.settings && parsed && typeof parsed === "object") {
-          if (parsed.defaultTaxPercent != null && parsed.taxPercent == null) {
-            parsed.taxPercent = parsed.defaultTaxPercent;
-          }
-          if (parsed.invoiceFooter == null) {
-            parsed.invoiceFooter = DEFAULTS.settings.invoiceFooter;
-          }
-          if (!parsed.accent) parsed.accent = DEFAULTS.settings.accent;
-        }
-        setState(parsed);
-      }
-    } catch {}
-    setReady(true);
-  }, [key]);
-
-  useEffect(() => {
-    if (!ready) return;
-    try {
-      localStorage.setItem(key, JSON.stringify(state));
-    } catch {}
-  }, [key, ready, state]);
-
-  return [state, setState, ready] as const;
-}
-
-function currencyLocale(currency: Settings["currency"]) {
-  switch (currency) {
-    case "IDR":
-      return "id-ID";
-    case "USD":
-      return "en-US";
-    case "EUR":
-      return "de-DE";
-    case "SGD":
-      return "en-SG";
-    case "JPY":
-      return "ja-JP";
-  }
-}
-
-function formatCurrency(value: number, currency: Settings["currency"]) {
-  try {
-    return new Intl.NumberFormat(currencyLocale(currency), {
-      style: "currency",
-      currency,
-      maximumFractionDigits: currency === "IDR" ? 0 : 2,
-    }).format(value || 0);
-  } catch {
-    const prefixMap: Record<Settings["currency"], string> = {
-      IDR: "Rp",
-      USD: "$",
-      EUR: "€",
-      SGD: "$",
-      JPY: "¥",
-    };
-    const frac = currency === "IDR" || currency === "JPY" ? 0 : 2;
-    return `${prefixMap[currency]} ${Number.isFinite(value) ? value.toFixed(frac) : "0"}`;
-  }
-}
-
-function parseNumber(input: string) {
-  const n = parseFloat(input.replace(/[^\d.-]/g, ""));
-  return isNaN(n) ? 0 : n;
-}
-
-function generateId(prefix = "id") {
-  return `${prefix}_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
-}
-
-function generateInvoiceNumber() {
-  const d = new Date();
-  const day = String(d.getDate()).padStart(2, "0");
-  const mon = String(d.getMonth() + 1).padStart(2, "0");
-  const yr = d.getFullYear();
-  const rnd = Math.floor(Math.random() * 900 + 100);
-  return `ILI-${yr}${mon}${day}-${rnd}`;
-}
-
-function createNewInvoice(): Invoice {
-  return {
-    id: generateId("inv"),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    number: generateInvoiceNumber(),
-    customer: { name: "", address: "", phone: "", email: "" },
-    items: [],
-    notes: "",
-    invoiceDiscountEnabled: false,
-    invoiceDiscountType: "percent",
-    invoiceDiscountValue: 0,
-  };
-}
-
-type TabKey = "invoice" | "products" | "company" | "history" | "settings";
-
-function useDebounced<T>(value: T, delay = 200) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return v;
-}
-
-function clamp(n: number, min = 0, max = Number.POSITIVE_INFINITY) {
-  return Math.min(Math.max(n, min), max);
-}
-
-// compute totals with discounts
-function computeTotals(inv: Invoice, settings: Settings) {
-  const rows = inv.items.map((it) => {
-    const qty = clamp(it.quantity || 0, 0);
-    const price = clamp(it.price || 0, 0);
-    const base = qty * price;
-
-    let discount = 0;
-    if (it.discountEnabled && (it.discountValue || 0) > 0) {
-      if ((it.discountType || "percent") === "amount") {
-        discount = clamp(it.discountValue || 0, 0, base);
-      } else {
-        discount = clamp(((it.discountValue || 0) / 100) * base, 0, base);
-      }
-    }
-
-    const lineTotal = clamp(base - discount, 0);
-    return { base, discount, lineTotal };
-  });
-
-  const subtotalBase = rows.reduce((s, r) => s + r.base, 0);
-  const itemDiscountTotal = rows.reduce((s, r) => s + r.discount, 0);
-  const subtotalAfterItems = clamp(subtotalBase - itemDiscountTotal, 0);
-
-  let invoiceDiscount = 0;
-  if (inv.invoiceDiscountEnabled && (inv.invoiceDiscountValue || 0) > 0) {
-    if ((inv.invoiceDiscountType || "percent") === "amount") {
-      invoiceDiscount = clamp(inv.invoiceDiscountValue || 0, 0, subtotalAfterItems);
-    } else {
-      invoiceDiscount = clamp(((inv.invoiceDiscountValue || 0) / 100) * subtotalAfterItems, 0, subtotalAfterItems);
-    }
-  }
-
-  const taxable = clamp(subtotalAfterItems - invoiceDiscount, 0);
-  const taxTotal = settings.showTax ? (taxable * (settings.taxPercent || 0)) / 100 : 0;
-  const total = taxable + taxTotal;
-
-  return {
-    subtotalBase,
-    itemDiscountTotal,
-    invoiceDiscount,
-    subtotalAfterItems,
-    taxable,
-    taxTotal,
-    total,
-  };
-}
-
 export default function ILoveInvoice() {
-  const [settings, setSettings, settingsReady] = usePersistentState<Settings>(STORAGE.settings, DEFAULTS.settings);
-  const [company, setCompany, companyReady] = usePersistentState<Company>(STORAGE.company, DEFAULTS.company);
-  const [products, setProducts, productsReady] = usePersistentState<Product[]>(STORAGE.products, DEFAULTS.products);
-  const [invoices, setInvoices, invoicesReady] = usePersistentState<Invoice[]>(STORAGE.invoices, []);
-  const [currentInvoiceId, setCurrentInvoiceId, currentIdReady] = usePersistentState<string | null>(
+  const [settings, setSettings, settingsReady, settingsError] = usePersistentState<Settings>(STORAGE.settings, DEFAULTS.settings);
+  const [company, setCompany, companyReady, companyError] = usePersistentState<Company>(STORAGE.company, DEFAULTS.company);
+  const [products, setProducts, productsReady, productsError] = usePersistentState<Product[]>(STORAGE.products, DEFAULTS.products);
+  const [invoices, setInvoices, invoicesReady, invoicesError] = usePersistentState<Invoice[]>(STORAGE.invoices, []);
+  const [currentInvoiceId, setCurrentInvoiceId, currentIdReady, currentIdError] = usePersistentState<string | null>(
     STORAGE.currentInvoiceId,
     null
   );
@@ -407,6 +100,13 @@ export default function ILoveInvoice() {
   const [toast, setToast] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportTarget, setExportTarget] = useState<Invoice | null>(null);
+  
+  // Image upload states
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  
+  // History preview modal states
+  const [previewInvoice, setPreviewInvoice] = useState<Invoice | null>(null);
 
   const [productQuery, setProductQuery] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
@@ -415,22 +115,44 @@ export default function ILoveInvoice() {
 
   const hydrated = settingsReady && companyReady && productsReady && invoicesReady && currentIdReady;
 
-  // theme
+  // Apply theme using custom hook
+  useTheme(settings);
+
+  // Monitor localStorage errors and show user feedback
   useEffect(() => {
-    const root = document.documentElement;
-    const apply = () => {
-      const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-      const isDark = settings.theme === "dark" || (settings.theme === "system" && prefersDark);
-      root.classList.toggle("dark", isDark);
-    };
-    apply();
-    if (settings.theme === "system") {
-      const mql = window.matchMedia("(prefers-color-scheme: dark)");
-      const handler = () => apply();
-      mql.addEventListener?.("change", handler);
-      return () => mql.removeEventListener?.("change", handler);
+    if (settingsError) {
+      triggerToast(`Pengaturan: ${settingsError.message}`);
     }
-  }, [settings.theme]);
+  }, [settingsError]);
+
+  useEffect(() => {
+    if (productsError) {
+      triggerToast(`Produk: ${productsError.message}`);
+    }
+  }, [productsError]);
+
+  useEffect(() => {
+    if (invoicesError) {
+      triggerToast(`Invoice: ${invoicesError.message}`);
+    }
+  }, [invoicesError]);
+
+  // Show general storage warning if any critical error occurs
+  useEffect(() => {
+    const hasQuotaError = [settingsError, companyError, productsError, invoicesError, currentIdError]
+      .some(error => error?.type === 'quota_exceeded');
+    
+    if (hasQuotaError) {
+      triggerToast('Storage hampir penuh! Pertimbangkan untuk menghapus data lama atau gambar besar.');
+    }
+  }, [settingsError, companyError, productsError, invoicesError, currentIdError]);
+
+  // Close preview modal when switching tabs
+  useEffect(() => {
+    if (activeTab !== "history" && previewInvoice) {
+      setPreviewInvoice(null);
+    }
+  }, [activeTab, previewInvoice]);
 
   // ensure at least one invoice exists
   useEffect(() => {
@@ -485,16 +207,7 @@ export default function ILoveInvoice() {
 
   function addBlankItem() {
     if (!currentInvoice) return;
-    const newItem: InvoiceItem = {
-      id: generateId("it"),
-      name: "",
-      description: "",
-      quantity: 1,
-      price: 0,
-      discountEnabled: false,
-      discountType: "percent",
-      discountValue: 0,
-    };
+    const newItem = createBlankInvoiceItem();
     updateInvoice({ items: [...currentInvoice.items, newItem] });
   }
 
@@ -512,11 +225,13 @@ export default function ILoveInvoice() {
 
   function duplicateInvoice(inv: Invoice) {
     const copy: Invoice = {
-      ...inv,
-      id: generateId("inv"),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      number: generateInvoiceNumber(),
+      ...createNewInvoice(),
+      customer: { ...inv.customer },
+      items: [...inv.items],
+      notes: inv.notes,
+      invoiceDiscountEnabled: inv.invoiceDiscountEnabled,
+      invoiceDiscountType: inv.invoiceDiscountType,
+      invoiceDiscountValue: inv.invoiceDiscountValue,
     };
     setInvoices((prev) => [copy, ...prev]);
     setCurrentInvoiceId(copy.id);
@@ -611,51 +326,7 @@ export default function ILoveInvoice() {
       const sourceNode = pdfRef.current;
       if (!sourceNode) throw new Error("PDF source not ready");
 
-      const scale = Math.min(2, window.devicePixelRatio || 1);
-      const canvas = await html2canvas(sourceNode, {
-        backgroundColor: "#ffffff",
-        scale,
-        useCORS: true,
-        logging: false,
-        removeContainer: true,
-        scrollY: 0,
-      });
-
-      const imgData = canvas.toDataURL("image/png", 1.0);
-      const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
-
-      pdf.setProperties({
-        title: `Invoice ${inv.number}`,
-        subject: "ILoveInvoice PDF",
-        author: company.name || "ILoveInvoice",
-        creator: "ILoveInvoice",
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight, "", "FAST");
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight, "", "FAST");
-        heightLeft -= pageHeight;
-      }
-
-      if (action === "save") {
-        pdf.save(`${inv.number}.pdf`);
-      } else {
-        (pdf as any).autoPrint?.();
-        const blobUrl = pdf.output("bloburl");
-        window.open(blobUrl, "_blank");
-      }
+      await exportInvoiceToPDF(sourceNode, inv, company, action);
 
       setExporting(false);
       setExportTarget(null);
@@ -668,16 +339,63 @@ export default function ILoveInvoice() {
     }
   }
 
-  function onLogoChange(file?: File | null) {
+  async function onLogoChange(file?: File | null) {
     if (!file) {
       setCompany({ ...company, logoDataUrl: "" });
+      setImageError(null);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setCompany({ ...company, logoDataUrl: String(reader.result || "") });
-    };
-    reader.readAsDataURL(file);
+
+    // Validate file type
+    if (!isValidImageFile(file)) {
+      setImageError("Format file tidak didukung. Gunakan JPG, PNG, GIF, atau WebP.");
+      return;
+    }
+
+    // Check file size (warn if over 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setImageError("File terlalu besar (>5MB). Gambar akan dikompres otomatis.");
+      // Continue processing with compression
+    } else {
+      setImageError(null);
+    }
+
+    setImageUploading(true);
+    
+    try {
+      // Compress the image before saving
+      const result = await compressImage(file, {
+        maxWidth: 800,
+        maxHeight: 400,
+        quality: 0.8,
+        maxSizeKB: 500, // Target 500KB or less
+        format: 'webp'
+      });
+
+      // Check if localStorage can handle this size
+      if (!checkLocalStorageSpace(result.compressedSize)) {
+        throw new Error('Storage penuh. Coba hapus data lama atau gunakan gambar yang lebih kecil.');
+      }
+
+      // Update company with compressed image
+      setCompany({ ...company, logoDataUrl: result.dataUrl });
+      
+      // Show success message with compression info
+      const compressionInfo = result.compressionRatio > 1.5 
+        ? ` (dikompres ${result.compressionRatio.toFixed(1)}x dari ${formatFileSize(result.originalSize)})`
+        : '';
+      
+      triggerToast(`Logo berhasil disimpan${compressionInfo}`);
+      setImageError(null);
+
+    } catch (error) {
+      console.error('Logo upload failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Gagal memproses gambar';
+      setImageError(errorMessage);
+      triggerToast(`Error: ${errorMessage}`);
+    } finally {
+      setImageUploading(false);
+    }
   }
 
   const themeColor = useMemo(() => {
@@ -687,6 +405,14 @@ export default function ILoveInvoice() {
       ? "#f8fafc"
       : undefined;
   }, [settings.theme]);
+
+  // helper: add item and return its id (used by product picker)
+  function addItemAndReturnId(): string | null {
+    if (!currentInvoice) return null;
+    const newItem = createBlankInvoiceItem();
+    updateInvoice({ items: [...currentInvoice.items, newItem] });
+    return newItem.id;
+  }
 
   if (!hydrated || !currentInvoice) {
     return (
@@ -1355,7 +1081,15 @@ export default function ILoveInvoice() {
                   <div className="text-sm font-medium mb-3">Profil Perusahaan</div>
                   <div className="flex items-center gap-4">
                     <div className="shrink-0">
-                      <div className="max-w-[220px] max-h-16 rounded-xl ring-1 ring-black/5 dark:ring-white/10 bg-white dark:bg-neutral-900 flex items-center justify-center p-1">
+                      <div className="max-w-[220px] max-h-16 rounded-xl ring-1 ring-black/5 dark:ring-white/10 bg-white dark:bg-neutral-900 flex items-center justify-center p-1 relative">
+                        {imageUploading ? (
+                          <div className="absolute inset-0 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-sm rounded-xl flex items-center justify-center">
+                            <div className="flex flex-col items-center gap-2">
+                              <Loader2 className={cn("w-5 h-5 animate-spin", accent.text)} />
+                              <div className="text-[10px] text-neutral-500">Memproses...</div>
+                            </div>
+                          </div>
+                        ) : null}
                         {company.logoDataUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -1376,9 +1110,13 @@ export default function ILoveInvoice() {
                             type="file"
                             accept="image/*"
                             onChange={(e) => onLogoChange(e.target.files?.[0])}
-                            className="block w-full text-xs text-neutral-600 dark:text-neutral-300 file:mr-3 file:py-2 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-medium file:text-white file:cursor-pointer file:bg-neutral-900 hover:file:bg-black dark:file:bg-white dark:file:text-neutral-900 dark:hover:file:bg-neutral-200"
+                            disabled={imageUploading}
+                            className={cn(
+                              "block w-full text-xs text-neutral-600 dark:text-neutral-300 file:mr-3 file:py-2 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-medium file:text-white file:cursor-pointer file:bg-neutral-900 hover:file:bg-black dark:file:bg-white dark:file:text-neutral-900 dark:hover:file:bg-neutral-200",
+                              imageUploading && "opacity-50 pointer-events-none"
+                            )}
                           />
-                          {company.logoDataUrl ? (
+                          {company.logoDataUrl && !imageUploading ? (
                             <motion.button
                               whileTap={{ scale: 0.98 }}
                               onClick={() => onLogoChange(null)}
@@ -1387,6 +1125,20 @@ export default function ILoveInvoice() {
                               Hapus
                             </motion.button>
                           ) : null}
+                        </div>
+                        {imageError && (
+                          <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-2 py-1">
+                            {imageError}
+                          </div>
+                        )}
+                        {companyError?.type === 'quota_exceeded' && (
+                          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 rounded-lg px-2 py-1">
+                            {companyError.message}
+                          </div>
+                        )}
+                        <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          💡 Gambar besar akan dikompres otomatis untuk menghemat storage. 
+                          Format yang didukung: JPG, PNG, GIF, WebP.
                         </div>
                       </label>
                     </div>
@@ -1451,9 +1203,20 @@ export default function ILoveInvoice() {
                 transition={{ type: "spring", stiffness: 380, damping: 32 }}
                 className="space-y-4"
               >
+                {/* Header with Stats */}
                 <Card>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-medium">Riwayat Invoice</div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className={cn("p-2 rounded-xl", settings.accent === "neutral" ? "bg-neutral-100 dark:bg-neutral-800" : accent.softBg)}>
+                        <Archive className={cn("w-5 h-5", accent.text)} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium">Riwayat Invoice</div>
+                        <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                          {invoices.length} invoice • {filteredInvoices.length} ditampilkan
+                        </div>
+                      </div>
+                    </div>
                     <motion.button
                       whileTap={{ scale: 0.98 }}
                       onClick={newInvoice}
@@ -1470,79 +1233,197 @@ export default function ILoveInvoice() {
                   </div>
                 </Card>
 
+                {/* Search and Filter */}
                 <Card>
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={historyQuery}
-                      onChange={(e) => setHistoryQuery(e.target.value)}
-                      placeholder="Cari invoice (no, nama pelanggan, catatan)…"
-                      className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
-                    />
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={historyQuery}
+                          onChange={(e) => setHistoryQuery(e.target.value)}
+                          placeholder="Cari invoice (no, pelanggan, catatan)…"
+                          className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
+                        />
+                      </div>
+                      <motion.button
+                        whileTap={{ scale: 0.98 }}
+                        className="p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition"
+                        title="Filter"
+                      >
+                        <Filter className="w-4 h-4" />
+                      </motion.button>
+                      <motion.button
+                        whileTap={{ scale: 0.98 }}
+                        className="p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition"
+                        title="Urutkan"
+                      >
+                        <SortDesc className="w-4 h-4" />
+                      </motion.button>
+                    </div>
                   </div>
+                </Card>
 
+                {/* Invoice List */}
+                <Card>
                   {filteredInvoices.length === 0 ? (
-                    <div className="mt-3 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-4 text-center">
-                      <div className="text-sm text-neutral-600 dark:text-neutral-300">
-                        Tidak ada invoice yang cocok.
+                    <div className="text-center py-8">
+                      <div className="rounded-full bg-neutral-100 dark:bg-neutral-800 w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                        <Receipt className="w-7 h-7 text-neutral-400" />
+                      </div>
+                      <div className="text-sm text-neutral-600 dark:text-neutral-300 mb-1">
+                        Tidak ada invoice yang ditemukan
+                      </div>
+                      <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                        Coba ubah kata kunci pencarian Anda
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-3 divide-y divide-neutral-200 dark:divide-neutral-800">
-                      {filteredInvoices.map((inv) => (
-                        <div key={inv.id} className="py-3 flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 rounded-xl grid place-items-center border border-neutral-200 dark:border-neutral-800">
-                              <FileText className={cn("w-5 h-5", accent.text)} />
-                            </div>
-                            <div className="leading-tight">
-                              <div className="text-sm font-medium">{inv.number}</div>
-                              <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                                {new Date(inv.updatedAt).toLocaleString()}
+                    <div className="space-y-3">
+                      {filteredInvoices.map((inv) => {
+                        const invoiceTotals = computeTotals(inv, settings);
+                        const isRecent = (Date.now() - inv.updatedAt) < 24 * 60 * 60 * 1000; // 24 hours
+                        
+                        return (
+                          <motion.div
+                            key={inv.id}
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-all duration-200"
+                          >
+                            <div className="space-y-3">
+                              {/* Invoice Header Info */}
+                              <div className="flex items-start gap-3">
+                                <div className={cn(
+                                  "flex-shrink-0 w-10 h-10 rounded-xl grid place-items-center border transition-colors",
+                                  isRecent 
+                                    ? cn(accent.softBg, "border-transparent")
+                                    : "border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+                                )}>
+                                  <Receipt className={cn("w-5 h-5", isRecent ? accent.text : "text-neutral-400")} />
+                                </div>
+                                
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                                      {inv.number}
+                                    </div>
+                                    {isRecent && (
+                                      <span className={cn(
+                                        "px-2 py-0.5 text-[10px] font-medium rounded-full",
+                                        accent.chip
+                                      )}>
+                                        Baru
+                                      </span>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="grid grid-cols-1 gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+                                    <div className="flex items-center gap-1.5">
+                                      <User className="w-3 h-3 flex-shrink-0" />
+                                      <span className="truncate">{inv.customer.name || "Tanpa nama"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <Calendar className="w-3 h-3 flex-shrink-0" />
+                                      <span>{new Date(inv.createdAt).toLocaleDateString('id-ID', { 
+                                        day: 'numeric', 
+                                        month: 'short', 
+                                        year: 'numeric' 
+                                      })}</span>
+                                      <span className="text-neutral-400">•</span>
+                                      <span>{new Date(inv.updatedAt).toLocaleTimeString('id-ID', {
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <Banknote className="w-3 h-3 flex-shrink-0" />
+                                      <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                                        {formatCurrency(invoiceTotals.total, settings.currency)}
+                                      </span>
+                                      <span className="text-neutral-400">•</span>
+                                      <span>{inv.items.length} item</span>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="text-[10px] text-neutral-500 dark:text-neutral-400">
-                                {inv.customer.name || "-"}
+
+                              {/* Actions - Mobile Optimized */}
+                              <div className="space-y-2 pt-2 border-t border-neutral-200 dark:border-neutral-700">
+                                {/* Primary Actions Row */}
+                                <div className="flex items-center gap-2">
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => setPreviewInvoice(inv)}
+                                    className={cn(
+                                      "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                                      accent.solid,
+                                      "text-white"
+                                    )}
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                    Lihat
+                                  </motion.button>
+                                  
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => {
+                                      setCurrentInvoiceId(inv.id);
+                                      setActiveTab("invoice");
+                                      setShowPreview(true);
+                                    }}
+                                    className={cn(
+                                      "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-sm font-medium transition-colors",
+                                      accent.ring
+                                    )}
+                                  >
+                                    <Edit3 className="w-4 h-4" />
+                                    Edit
+                                  </motion.button>
+                                </div>
+
+                                {/* Secondary Actions Row */}
+                                <div className="flex items-center justify-center gap-1">
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => duplicateInvoice(inv)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-xs font-medium"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Duplikat</span>
+                                  </motion.button>
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => exportInvoice(inv, "print")}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-xs font-medium"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Print</span>
+                                  </motion.button>
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => exportInvoice(inv, "save")}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-xs font-medium"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">PDF</span>
+                                  </motion.button>
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => deleteInvoice(inv.id)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-600 dark:text-rose-400 transition-colors text-xs font-medium"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Hapus</span>
+                                  </motion.button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <motion.button
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => {
-                                setCurrentInvoiceId(inv.id);
-                                setActiveTab("invoice");
-                                setShowPreview(true);
-                              }}
-                              className="text-xs px-3 py-2 rounded-full border border-neutral-200 dark:border-neutral-800"
-                            >
-                              Edit
-                            </motion.button>
-                            <motion.button
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => duplicateInvoice(inv)}
-                              className="text-xs px-3 py-2 rounded-full border border-neutral-200 dark:border-neutral-800"
-                            >
-                              Duplikat
-                            </motion.button>
-                            <motion.button
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => exportInvoice(inv, "print")}
-                              className="text-xs px-3 py-2 rounded-full border border-neutral-200 dark:border-neutral-800"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span className="ml-1">Print</span>
-                            </motion.button>
-                            <motion.button
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => deleteInvoice(inv.id)}
-                              className="text-xs px-3 py-2 rounded-full border border-neutral-200 dark:border-neutral-800 text-rose-600 dark:text-rose-400"
-                            >
-                              Hapus
-                            </motion.button>
-                          </div>
-                        </div>
-                      ))}
+
+                          </motion.div>
+                        );
+                      })}
                     </div>
                   )}
                 </Card>
@@ -1782,6 +1663,120 @@ export default function ILoveInvoice() {
           ) : null}
         </AnimatePresence>
 
+        {/* Invoice Preview Modal */}
+        <AnimatePresence>
+          {previewInvoice ? (
+            <div className="no-print fixed inset-0 z-50">
+              <motion.div
+                className="absolute inset-0 bg-black/40"
+                onClick={() => setPreviewInvoice(null)}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              />
+              <motion.div
+                className="absolute inset-x-0 bottom-0 max-h-[85vh]"
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              >
+                <div className="mx-auto max-w-2xl px-4 pb-4">
+                  <div className="rounded-t-2xl bg-white dark:bg-neutral-900 border border-b-0 border-black/5 dark:border-white/10 shadow-xl overflow-hidden max-h-[85vh] flex flex-col">
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50">
+                      <div className="flex items-center gap-3">
+                        <div className={cn("p-2 rounded-lg", accent.softBg)}>
+                          <Eye className={cn("w-5 h-5", accent.text)} />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium">Preview Invoice</div>
+                          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                            {previewInvoice.number} • {previewInvoice.customer.name || "Tanpa nama"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => {
+                            setCurrentInvoiceId(previewInvoice.id);
+                            setActiveTab("invoice");
+                            setShowPreview(true);
+                            setPreviewInvoice(null);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-xs font-medium transition-colors"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          Edit
+                        </motion.button>
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => setPreviewInvoice(null)}
+                          className="p-2 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </motion.button>
+                      </div>
+                    </div>
+                    
+                    {/* Preview Content - Scrollable */}
+                    <div className="flex-1 overflow-y-auto">
+                      <div className="p-4">
+                        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden bg-white dark:bg-neutral-900">
+                          <InvoicePreview
+                            company={company}
+                            invoice={previewInvoice}
+                            settings={settings}
+                            totals={computeTotals(previewInvoice, settings)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Modal Actions */}
+                    <div className="flex items-center justify-between gap-3 p-4 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50">
+                      <div className="flex items-center gap-2">
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => duplicateInvoice(previewInvoice)}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-xs font-medium transition-colors"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          Duplikat
+                        </motion.button>
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => exportInvoice(previewInvoice, "print")}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-xs font-medium transition-colors"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          Print
+                        </motion.button>
+                      </div>
+                      <motion.button
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => {
+                          exportInvoice(previewInvoice, "save");
+                          setPreviewInvoice(null);
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-medium shadow-sm transition",
+                          accent.solid,
+                          accent.solidHover
+                        )}
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download PDF
+                      </motion.button>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          ) : null}
+        </AnimatePresence>
+
         {/* Hidden offscreen PDF area */}
         {exporting ? (
           <div
@@ -1846,633 +1841,5 @@ export default function ILoveInvoice() {
         </AnimatePresence>
       </div>
     </>
-  );
-
-  // helper: add item and return its id (used by product picker)
-  function addItemAndReturnId(): string | null {
-    if (!currentInvoice) return null;
-    const id = generateId("it");
-    const newItem: InvoiceItem = {
-      id,
-      name: "",
-      description: "",
-      quantity: 1,
-      price: 0,
-      discountEnabled: false,
-      discountType: "percent",
-      discountValue: 0,
-    };
-    updateInvoice({ items: [...currentInvoice.items, newItem] });
-    return id;
-  }
-}
-
-/* Components */
-
-function Card({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <motion.section
-      initial={{ y: 8, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ type: "spring", stiffness: 420, damping: 32 }}
-      className={cn(
-        "rounded-2xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-neutral-900/70 backdrop-blur supports-[backdrop-filter]:bg-white/50 dark:supports-[backdrop-filter]:bg-neutral-900/50 shadow-[0_0_0_1px_rgba(0,0,0,0.02),0_10px_30px_-12px_rgba(0,0,0,0.2)] p-4 space-y-3",
-        className
-      )}
-    >
-      {children}
-    </motion.section>
-  );
-}
-
-function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="text-sm text-neutral-600 dark:text-neutral-300">{label}</div>
-      <div className={cn("text-sm", strong ? "font-semibold" : "font-medium")}>{value}</div>
-    </div>
-  );
-}
-
-function TextField({
-  label,
-  value,
-  onChange,
-  type = "text",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: string;
-}) {
-  return (
-    <label className="block">
-      <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">{label}</div>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 px-3.5 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
-      />
-    </label>
-  );
-}
-
-function TextArea({
-  label,
-  value,
-  onChange,
-  rows = 3,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  rows?: number;
-}) {
-  return (
-    <label className="block">
-      <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">{label}</div>
-      <textarea
-        rows={rows}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 px-3.5 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
-      />
-    </label>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-  min,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  min?: number;
-}) {
-  return (
-    <label className="block">
-      <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">{label}</div>
-      <input
-        inputMode="decimal"
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 px-3.5 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
-        min={min}
-      />
-    </label>
-  );
-}
-
-function MoneyField({
-  label,
-  value,
-  onChange,
-  currency,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  currency: Settings["currency"];
-}) {
-  const [raw, setRaw] = useState(String(value || 0));
-  useEffect(() => {
-    setRaw(String(value ?? 0));
-  }, [value]);
-  return (
-    <label className="block">
-      <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">{label}</div>
-      <input
-        inputMode="decimal"
-        type="text"
-        value={raw}
-        onChange={(e) => {
-          setRaw(e.target.value);
-          onChange(parseNumber(e.target.value));
-        }}
-        className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 px-3.5 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
-        placeholder={formatCurrency(0, currency)}
-      />
-    </label>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { label: string; value: string }[];
-}) {
-  return (
-    <label className="block">
-      <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">{label}</div>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/70 px-3.5 py-2.5 text-sm outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-white/5"
-      >
-        {options.map((op) => (
-          <option key={op.value} value={op.value}>
-            {op.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        "h-7 w-12 rounded-full relative transition border",
-        checked
-          ? "bg-neutral-900 border-neutral-900 dark:bg-white dark:border-white"
-          : "bg-neutral-200 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700"
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-1 left-1 h-5 w-5 rounded-full bg-white dark:bg-neutral-900 transition",
-          checked ? "translate-x-5" : "translate-x-0",
-          "shadow"
-        )}
-      />
-    </button>
-  );
-}
-
-function TabButton({
-  active,
-  icon,
-  label,
-  onClick,
-  accent,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-  accent: (typeof ACCENT_MAP)[AccentKey];
-}) {
-  return (
-    <motion.button
-      whileTap={{ scale: 0.98 }}
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-2xl transition",
-        active ? cn(accent.softBg, "text-neutral-900 dark:text-white") : "text-neutral-500"
-      )}
-    >
-      <div className="w-6 h-6 grid place-items-center">{icon}</div>
-      <div className="text-[10px] leading-none">{label}</div>
-    </motion.button>
-  );
-}
-
-function ProductEditor({
-  accent,
-  onSave,
-}: {
-  accent: (typeof ACCENT_MAP)[AccentKey];
-  onSave: (product: Product) => void;
-}) {
-  const [name, setName] = useState("");
-  const [desc, setDesc] = useState("");
-  const [price, setPrice] = useState<number>(0);
-
-  function reset() {
-    setName("");
-    setDesc("");
-    setPrice(0);
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-3">
-      <TextField label="Nama Produk" value={name} onChange={setName} />
-      <TextArea label="Deskripsi" value={desc} onChange={setDesc} rows={2} />
-      <div className="grid grid-cols-1 gap-3">
-        <MoneyField label="Harga" value={price} onChange={setPrice} currency="IDR" />
-      </div>
-      <div className="flex items-center justify-end">
-        <motion.button
-          whileTap={{ scale: 0.98 }}
-          onClick={() => {
-            if (!name.trim()) return;
-            const p: Product = {
-              id: generateId("prd"),
-              name,
-              description: desc,
-              price,
-            };
-            onSave(p);
-            reset();
-          }}
-          className={cn(
-            "inline-flex items-center gap-2 px-3 py-2 rounded-full text-white text-sm shadow-sm transition",
-            accent.solid,
-            accent.solidHover
-          )}
-        >
-          <Plus className="w-4 h-4 text-white" />
-          Simpan Produk
-        </motion.button>
-      </div>
-    </div>
-  );
-}
-
-function ProductRow({
-  product,
-  currency,
-  onChange,
-  onDelete,
-}: {
-  product: Product;
-  currency: Settings["currency"];
-  onChange: (p: Product) => void;
-  onDelete: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Product>(product);
-  useEffect(() => setDraft(product), [product]);
-  return (
-    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3">
-      {editing ? (
-        <div className="grid grid-cols-1 gap-3">
-          <TextField
-            label="Nama Produk"
-            value={draft.name}
-            onChange={(v) => setDraft({ ...draft, name: v })}
-          />
-          <TextArea
-            label="Deskripsi"
-            value={draft.description || ""}
-            onChange={(v) => setDraft({ ...draft, description: v })}
-            rows={2}
-          />
-          <div className="grid grid-cols-1 gap-3">
-            <MoneyField
-              label="Harga"
-              value={draft.price}
-              onChange={(v) => setDraft({ ...draft, price: v })}
-              currency={currency}
-            />
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                setEditing(false);
-                setDraft(product);
-              }}
-              className="text-xs px-3 py-2 rounded-full border border-neutral-200 dark:border-neutral-800"
-            >
-              Batal
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                onChange(draft);
-                setEditing(false);
-              }}
-              className="text-xs px-3 py-2 rounded-full border border-neutral-200 dark:border-neutral-800"
-            >
-              Simpan
-            </motion.button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">{product.name}</div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
-              {product.description}
-            </div>
-            <div className="mt-1 inline-flex items-center gap-2">
-              <span className="text-xs font-medium">
-                {formatCurrency(product.price, currency)}
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setEditing(true)}
-              className="p-2 rounded-full border border-neutral-200 dark:border-neutral-800"
-            >
-              <Pencil className="w-4 h-4" />
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={onDelete}
-              className="p-2 rounded-full border border-neutral-200 dark:border-neutral-800 text-rose-600 dark:text-rose-400"
-            >
-              <Trash2 className="w-4 h-4" />
-            </motion.button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function InvoicePreview({
-  company,
-  invoice,
-  settings,
-  totals,
-  printing,
-}: {
-  company: Company;
-  invoice: Invoice;
-  settings: Settings;
-  totals: {
-    subtotalBase: number;
-    itemDiscountTotal: number;
-    invoiceDiscount: number;
-    subtotalAfterItems: number;
-    taxable: number;
-    taxTotal: number;
-    total: number;
-  };
-  printing?: boolean;
-}) {
-  const anyItemHasDiscount = invoice.items.some(
-    (it) => it.discountEnabled && (it.discountValue || 0) > 0
-  );
-
-  // NEW: same simple total logic for preview
-  const hasDiscount = totals.itemDiscountTotal > 0 || totals.invoiceDiscount > 0;
-  const hasTax = settings.showTax && (settings.taxPercent || 0) > 0;
-  const simpleTotalOnly = !hasDiscount && !hasTax;
-
-  return (
-    <div className="bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50">
-      <div className="p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="max-w-[180px] max-h-12 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex items-center justify-center p-1">
-              {company.logoDataUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={company.logoDataUrl}
-                  alt="Logo"
-                  className="h-12 w-auto object-contain"
-                />
-              ) : (
-                <FileText className="w-6 h-6 text-neutral-400" />
-              )}
-            </div>
-            <div className="leading-tight">
-              <div className="font-semibold">{company.name || "Nama Perusahaan"}</div>
-              <div className="text-xs text-neutral-500 dark:text-neutral-400 whitespace-pre-wrap">
-                {company.address || "Alamat perusahaan..."}
-              </div>
-              <div className="text-xs text-neutral-500 dark:text-neutral-400 flex flex-col mt-1">
-                {settings.showCompanyPhone && company.phone ? <span>{company.phone}</span> : null}
-                {settings.showCompanyEmail && company.email ? <span>{company.email}</span> : null}
-              </div>
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">Invoice</div>
-            <div className="text-sm font-medium">{invoice.number}</div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
-              {new Date(invoice.createdAt).toLocaleDateString()}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">Tagihan kepada</div>
-            <div className="text-sm font-medium">{invoice.customer.name || "-"}</div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400 whitespace-pre-wrap">
-              {invoice.customer.address || "-"}
-            </div>
-          </div>
-          <div className="text-left sm:text-right">
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">Kontak</div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
-              {invoice.customer.phone || "-"}
-            </div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
-              {invoice.customer.email || "-"}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-neutral-500 dark:text-neutral-400">
-                <th className="py-2">Produk</th>
-                <th className="py-2">Qty</th>
-                <th className="py-2">Harga</th>
-                {anyItemHasDiscount ? <th className="py-2">Diskon</th> : null}
-                <th className="py-2 text-right">Jumlah</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.items.length === 0 ? (
-                <tr>
-                  <td className="py-3 text-neutral-500 dark:text-neutral-400" colSpan={anyItemHasDiscount ? 5 : 4}>
-                    Tidak ada item.
-                  </td>
-                </tr>
-              ) : (
-                invoice.items.map((it) => {
-                  const qty = clamp(it.quantity || 0, 0);
-                  const price = clamp(it.price || 0, 0);
-                  const base = qty * price;
-                  let discount = 0;
-                  if (it.discountEnabled && (it.discountValue || 0) > 0) {
-                    if ((it.discountType || "percent") === "amount") {
-                      discount = clamp(it.discountValue || 0, 0, base);
-                    } else {
-                      discount = clamp(((it.discountValue || 0) / 100) * base, 0, base);
-                    }
-                  }
-                  const lineTotal = clamp(base - discount, 0);
-                  return (
-                    <tr key={it.id} className="align-top">
-                      <td className="py-3">
-                        <div className="font-medium">{it.name || "-"}</div>
-                        {it.description ? (
-                          <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                            {it.description}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="py-3">{qty}</td>
-                      <td className="py-3">{formatCurrency(price, settings.currency)}</td>
-                      {anyItemHasDiscount ? (
-                        <td className="py-3">
-                          {discount > 0 ? `− ${formatCurrency(discount, settings.currency)}` : "-"}
-                        </td>
-                      ) : null}
-                      <td className="py-3 text-right">{formatCurrency(lineTotal, settings.currency)}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <div>
-            {invoice.notes ? (
-              <>
-                <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">Catatan</div>
-                <div className="text-sm whitespace-pre-wrap">{invoice.notes}</div>
-              </>
-            ) : null}
-          </div>
-          <div className="sm:text-right">
-            <div className="space-y-1">
-              {simpleTotalOnly ? (
-                <div className="flex items-center justify-between sm:justify-end gap-6">
-                  <div className="text-sm font-semibold">Total</div>
-                  <div className="text-sm font-semibold">
-                    {formatCurrency(totals.total, settings.currency)}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between sm:justify-end gap-6">
-                    <div className="text-sm text-neutral-600 dark:text-neutral-300">Subtotal awal</div>
-                    <div className="text-sm font-medium">
-                      {formatCurrency(totals.subtotalBase, settings.currency)}
-                    </div>
-                  </div>
-                  {totals.itemDiscountTotal > 0 ? (
-                    <div className="flex items-center justify-between sm:justify-end gap-6">
-                      <div className="text-sm text-neutral-600 dark:text-neutral-300">Diskon item</div>
-                      <div className="text-sm font-medium">
-                        − {formatCurrency(totals.itemDiscountTotal, settings.currency)}
-                      </div>
-                    </div>
-                  ) : null}
-                  {(totals.itemDiscountTotal > 0 || invoice.invoiceDiscountEnabled) ? (
-                    <div className="flex items-center justify-between sm:justify-end gap-6">
-                      <div className="text-sm text-neutral-600 dark:text-neutral-300">Subtotal setelah diskon item</div>
-                      <div className="text-sm font-medium">
-                        {formatCurrency(totals.subtotalAfterItems, settings.currency)}
-                      </div>
-                    </div>
-                  ) : null}
-                  {totals.invoiceDiscount > 0 ? (
-                    <div className="flex items-center justify-between sm:justify-end gap-6">
-                      <div className="text-sm text-neutral-600 dark:text-neutral-300">Diskon invoice</div>
-                      <div className="text-sm font-medium">
-                        − {formatCurrency(totals.invoiceDiscount, settings.currency)}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="border-t border-neutral-200 dark:border-neutral-800 my-2" />
-                  <div className="flex items-center justify-between sm:justify-end gap-6">
-                    <div className="text-sm text-neutral-600 dark:text-neutral-300">Subtotal</div>
-                    <div className="text-sm font-medium">
-                      {formatCurrency(totals.taxable, settings.currency)}
-                    </div>
-                  </div>
-                  {settings.showTax ? (
-                    <div className="flex items-center justify-between sm:justify-end gap-6">
-                      <div className="text-sm text-neutral-600 dark:text-neutral-300">Pajak ({settings.taxPercent || 0}%)</div>
-                      <div className="text-sm font-medium">
-                        {formatCurrency(totals.taxTotal, settings.currency)}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="border-t border-neutral-200 dark:border-neutral-800 my-2" />
-                  <div className="flex items-center justify-between sm:justify-end gap-6">
-                    <div className="text-sm font-semibold">Total</div>
-                    <div className="text-sm font-semibold">
-                      {formatCurrency(totals.total, settings.currency)}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Custom footer (always shown, also in PDF) */}
-        <div className="mt-8 text-xs text-neutral-700 dark:text-neutral-300 text-center">
-          {settings.invoiceFooter || DEFAULTS.settings.invoiceFooter}
-        </div>
-        {!printing ? (
-          <div className="mt-2 text-[10px] text-neutral-400 text-center">
-            Dibuat dengan ILoveInvoice
-          </div>
-        ) : null}
-      </div>
-    </div>
   );
 }

@@ -19,14 +19,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
+  // Set html.dark before React hydration to avoid FOUC and mismatches
+  const themeScript = `(()=>{try{const raw=localStorage.getItem('ez_settings');const s=raw?JSON.parse(raw):null;const pref=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;const t=(s&&s.theme)||'system';const dark=t==='dark'||(t==='system'&&pref);const root=document.documentElement;root.classList.toggle('dark',dark);root.setAttribute('data-theme',dark?'dark':'light');}catch(e){}})();`;
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
       </body>
     </html>
