@@ -1,17 +1,21 @@
 import type { Metadata } from 'next';
 import { HistoryDetailClient } from './HistoryDetailClient';
 
-interface HistoryDetailPageProps {
-  params: { id: string };
-}
+type Params = { id: string };
 
-export async function generateMetadata({ params }: HistoryDetailPageProps): Promise<Metadata> {
+export async function generateMetadata(
+  { params }: { params: Promise<Params> }
+): Promise<Metadata> {
+  const { id } = await params;
   return {
-    title: `History - Invoice ${params.id} - ILoveInvoice`,
-    description: `Lihat detail dan preview invoice ${params.id} dari riwayat`,
+    title: `History - Invoice ${id} - ILoveInvoice`,
+    description: `Lihat detail dan preview invoice ${id} dari riwayat`,
   };
 }
 
-export default function HistoryDetailPage({ params }: HistoryDetailPageProps) {
-  return <HistoryDetailClient invoiceId={params.id} />;
+export default async function HistoryDetailPage(
+  { params }: { params: Promise<Params> }
+) {
+  const { id } = await params;
+  return <HistoryDetailClient invoiceId={id} />;
 }

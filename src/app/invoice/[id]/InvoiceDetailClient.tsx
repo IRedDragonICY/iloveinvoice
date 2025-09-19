@@ -59,7 +59,7 @@ export function InvoiceDetailClient({ invoiceId }: InvoiceDetailClientProps) {
               Invoice tidak ditemukan
             </h2>
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Invoice dengan ID "{invoiceId}" tidak ada atau telah dihapus.
+              Invoice dengan ID &quot;{invoiceId}&quot; tidak ada atau telah dihapus.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">

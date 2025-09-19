@@ -51,16 +51,18 @@ export function usePersistentState<T>(key: string, initial: T) {
         const serialized = JSON.stringify(state);
         localStorage.setItem(key, serialized);
         if (error) setError(null);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Failed to save to localStorage:', key, err);
 
         let errorType: PersistentStateError['type'] = 'unknown';
         let message = 'Failed to save data';
 
-        if (err.name === 'QuotaExceededError' || err.code === 22) {
+        const e = err as { name?: string; code?: number } | undefined;
+
+        if (e?.name === 'QuotaExceededError' || e?.code === 22) {
           errorType = 'quota_exceeded';
           message = 'Storage quota exceeded. Try reducing image sizes or clearing old data.';
-        } else if (err.name === 'SecurityError') {
+        } else if (e?.name === 'SecurityError') {
           errorType = 'access_denied';
           message = 'Access to storage denied. Check browser settings.';
         }

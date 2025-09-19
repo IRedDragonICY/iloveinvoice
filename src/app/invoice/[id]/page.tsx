@@ -1,17 +1,21 @@
 import type { Metadata } from 'next';
 import { InvoiceDetailClient } from './InvoiceDetailClient';
 
-interface InvoiceDetailPageProps {
-  params: { id: string };
-}
+type Params = { id: string };
 
-export async function generateMetadata({ params }: InvoiceDetailPageProps): Promise<Metadata> {
+export async function generateMetadata(
+  { params }: { params: Promise<Params> }
+): Promise<Metadata> {
+  const { id } = await params;
   return {
-    title: `Invoice ${params.id} - ILoveInvoice`,
-    description: `Edit dan kelola invoice ${params.id} - Generator invoice online gratis`,
+    title: `Invoice ${id} - ILoveInvoice`,
+    description: `Edit dan kelola invoice ${id} - Generator invoice online gratis`,
   };
 }
 
-export default function InvoiceDetailPage({ params }: InvoiceDetailPageProps) {
-  return <InvoiceDetailClient invoiceId={params.id} />;
+export default async function InvoiceDetailPage(
+  { params }: { params: Promise<Params> }
+) {
+  const { id } = await params;
+  return <InvoiceDetailClient invoiceId={id} />;
 }
