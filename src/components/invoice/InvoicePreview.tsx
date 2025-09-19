@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { FileText } from 'lucide-react';
 import { formatCurrency, clamp } from '@/lib/utils';
 import { DEFAULTS } from '@/lib/constants';
@@ -11,7 +12,7 @@ interface InvoicePreviewProps {
   printing?: boolean;
 }
 
-export function InvoicePreview({
+function InvoicePreviewInner({
   company,
   invoice,
   settings,
@@ -232,4 +233,6 @@ export function InvoicePreview({
     </div>
   );
 }
+
+export const InvoicePreview = memo(InvoicePreviewInner);
 

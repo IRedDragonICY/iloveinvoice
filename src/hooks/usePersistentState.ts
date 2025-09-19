@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { STORAGE, DEFAULTS } from '@/lib/constants';
 
 export interface PersistentStateError {
@@ -10,6 +10,7 @@ export function usePersistentState<T>(key: string, initial: T) {
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<T>(initial);
   const [error, setError] = useState<PersistentStateError | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     try {
@@ -40,28 +41,39 @@ export function usePersistentState<T>(key: string, initial: T) {
 
   useEffect(() => {
     if (!ready) return;
-    
-    try {
-      const serialized = JSON.stringify(state);
-      localStorage.setItem(key, serialized);
-      // Clear any previous errors on successful save
-      if (error) setError(null);
-    } catch (err: any) {
-      console.error('Failed to save to localStorage:', key, err);
-      
-      let errorType: PersistentStateError['type'] = 'unknown';
-      let message = 'Failed to save data';
-      
-      if (err.name === 'QuotaExceededError' || err.code === 22) {
-        errorType = 'quota_exceeded';
-        message = 'Storage quota exceeded. Try reducing image sizes or clearing old data.';
-      } else if (err.name === 'SecurityError') {
-        errorType = 'access_denied';
-        message = 'Access to storage denied. Check browser settings.';
-      }
-      
-      setError({ type: errorType, message });
+
+    // Debounce writes to batch quick successive updates
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
     }
+    saveTimerRef.current = window.setTimeout(() => {
+      try {
+        const serialized = JSON.stringify(state);
+        localStorage.setItem(key, serialized);
+        if (error) setError(null);
+      } catch (err: any) {
+        console.error('Failed to save to localStorage:', key, err);
+
+        let errorType: PersistentStateError['type'] = 'unknown';
+        let message = 'Failed to save data';
+
+        if (err.name === 'QuotaExceededError' || err.code === 22) {
+          errorType = 'quota_exceeded';
+          message = 'Storage quota exceeded. Try reducing image sizes or clearing old data.';
+        } else if (err.name === 'SecurityError') {
+          errorType = 'access_denied';
+          message = 'Access to storage denied. Check browser settings.';
+        }
+
+        setError({ type: errorType, message });
+      }
+    }, 150);
+
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+    };
   }, [key, ready, state, error]);
 
   // Enhanced setState that can handle save errors

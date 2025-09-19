@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Pencil, Trash2 } from 'lucide-react';
 import { TextField, TextArea, MoneyField } from '@/components/ui';
@@ -12,7 +12,7 @@ interface ProductRowProps {
   onDelete: () => void;
 }
 
-export function ProductRow({ product, currency, onChange, onDelete }: ProductRowProps) {
+function ProductRowInner({ product, currency, onChange, onDelete }: ProductRowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Product>(product);
   
@@ -98,4 +98,14 @@ export function ProductRow({ product, currency, onChange, onDelete }: ProductRow
     </div>
   );
 }
+
+export const ProductRow = memo(ProductRowInner, (prev, next) => {
+  return (
+    prev.currency === next.currency &&
+    prev.product.id === next.product.id &&
+    prev.product.name === next.product.name &&
+    prev.product.description === next.product.description &&
+    prev.product.price === next.product.price
+  );
+});
 

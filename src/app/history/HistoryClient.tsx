@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Plus, Search, Filter, SortDesc, Receipt, User, Calendar, Banknote,
@@ -30,6 +30,9 @@ export function HistoryClient() {
   const [historyQuery, setHistoryQuery] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<Invoice | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportTarget, setExportTarget] = useState<Invoice | null>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   
   const debouncedHistoryQuery = useDebounced(historyQuery, 200);
@@ -54,6 +57,32 @@ export function HistoryClient() {
     }
     return list.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [invoices, debouncedHistoryQuery]);
+
+  const allSelectedOnPage = filteredInvoices.length > 0 && filteredInvoices.every((inv) => selectedIds.has(inv.id));
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelectedOnPage) {
+        filteredInvoices.forEach((inv) => next.delete(inv.id));
+      } else {
+        filteredInvoices.forEach((inv) => next.add(inv.id));
+      }
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
 
   function duplicateInvoice(inv: Invoice) {
     const copy: Invoice = {
@@ -86,6 +115,23 @@ export function HistoryClient() {
     triggerToast("Invoice dihapus");
   }
 
+  function deleteInvoicesBatch(ids: string[]) {
+    if (ids.length === 0) return;
+    setInvoices((prev) => prev.filter((i) => !ids.includes(i.id)));
+    if (ids.includes(currentInvoiceId || "")) {
+      const remaining = invoices.filter((i) => !ids.includes(i.id));
+      if (remaining.length > 0) {
+        setCurrentInvoiceId(remaining[0].id);
+      } else {
+        const inv = createNewInvoice();
+        setInvoices((prev) => [inv, ...prev]);
+        setCurrentInvoiceId(inv.id);
+      }
+    }
+    setSelectedIds(new Set());
+    triggerToast(`${ids.length} invoice dihapus`);
+  }
+
   function newInvoice() {
     const inv = createNewInvoice();
     setInvoices((prev) => [inv, ...prev]);
@@ -96,33 +142,42 @@ export function HistoryClient() {
 
   async function exportInvoice(inv: Invoice, action: "save" | "print" = "save") {
     try {
+      setExportTarget(inv);
       setExporting(true);
-      
-      // Create temporary div for PDF generation
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = `
-        <div class="w-[794px] bg-white text-neutral-900 p-6">
-          <div id="invoice-content"></div>
-        </div>
-      `;
-      tempDiv.style.position = 'fixed';
-      tempDiv.style.left = '-10000px';
-      tempDiv.style.top = '0';
-      document.body.appendChild(tempDiv);
-
-      const sourceNode = tempDiv.querySelector('#invoice-content') as HTMLElement;
-      if (sourceNode) {
-        // Render invoice preview to temp div
-        // This is a simplified version - in real app you'd render the full component
-        await exportInvoiceToPDF(sourceNode, inv, company, action);
-      }
-      
-      document.body.removeChild(tempDiv);
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const sourceNode = pdfRef.current;
+      if (!sourceNode) throw new Error('PDF source not ready');
+      await exportInvoiceToPDF(sourceNode, inv, company, action);
       setExporting(false);
+      setExportTarget(null);
       triggerToast(action === "save" ? "PDF berhasil dibuat" : "Membuka dialog print…");
     } catch (e) {
       console.error(e);
       setExporting(false);
+      setExportTarget(null);
+      triggerToast("Gagal membuat PDF");
+    }
+  }
+
+  async function exportInvoicesBatch(ids: string[], action: "save" | "print" = "save") {
+    const list = invoices.filter((i) => ids.includes(i.id));
+    if (list.length === 0) return;
+    try {
+      setExporting(true);
+      for (const inv of list) {
+        setExportTarget(inv);
+        await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+        const sourceNode = pdfRef.current;
+        if (!sourceNode) throw new Error('PDF source not ready');
+        await exportInvoiceToPDF(sourceNode, inv, company, action);
+      }
+      setExporting(false);
+      setExportTarget(null);
+      triggerToast(`${list.length} PDF berhasil dibuat`);
+    } catch (e) {
+      console.error(e);
+      setExporting(false);
+      setExportTarget(null);
       triggerToast("Gagal membuat PDF");
     }
   }
@@ -207,6 +262,63 @@ export function HistoryClient() {
           </div>
         ) : (
           <div className="space-y-3">
+            {/* Bulk actions */}
+            <div className="flex items-center justify-between">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={allSelectedOnPage}
+                  onChange={toggleSelectAllOnPage}
+                  className="rounded border-neutral-300 dark:border-neutral-700"
+                />
+                Pilih semua
+                {selectedIds.size > 0 ? (
+                  <span className="text-xs text-neutral-500">({selectedIds.size} dipilih)</span>
+                ) : null}
+              </label>
+              <div className="flex items-center gap-2">
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  disabled={selectedIds.size === 0}
+                  onClick={() => exportInvoicesBatch(Array.from(selectedIds), "save")}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-xs border transition-colors",
+                    selectedIds.size === 0
+                      ? "border-neutral-200 dark:border-neutral-800 text-neutral-400"
+                      : "border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  )}
+                >
+                  Export PDF
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  disabled={selectedIds.size === 0}
+                  onClick={() => {
+                    if (selectedIds.size === 0) return;
+                    if (window.confirm(`Hapus ${selectedIds.size} invoice terpilih?`)) {
+                      deleteInvoicesBatch(Array.from(selectedIds));
+                    }
+                  }}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-xs border transition-colors",
+                    selectedIds.size === 0
+                      ? "border-neutral-200 dark:border-neutral-800 text-neutral-400"
+                      : "border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-600 dark:text-rose-400"
+                  )}
+                >
+                  Hapus
+                </motion.button>
+                {selectedIds.size > 0 ? (
+                  <motion.button
+                    whileTap={{ scale: 0.95 }}
+                    onClick={clearSelection}
+                    className="px-3 py-2 rounded-lg text-xs border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  >
+                    Bersihkan
+                  </motion.button>
+                ) : null}
+              </div>
+            </div>
             {filteredInvoices.map((inv) => {
               const invoiceTotals = computeTotals(inv, settings);
               const isRecent = (Date.now() - inv.updatedAt) < 24 * 60 * 60 * 1000; // 24 hours
@@ -228,6 +340,15 @@ export function HistoryClient() {
                   <div className="space-y-3">
                     {/* Invoice Header Info */}
                     <div className="flex items-start gap-3">
+                      <div className="pt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(inv.id)}
+                          onChange={() => toggleSelect(inv.id)}
+                          className="rounded border-neutral-300 dark:border-neutral-700"
+                          aria-label="Pilih invoice"
+                        />
+                      </div>
                       <div className={cn(
                         "flex-shrink-0 w-10 h-10 rounded-xl grid place-items-center border transition-colors",
                         (isCurrent || isRecent)

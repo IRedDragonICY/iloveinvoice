@@ -6,6 +6,11 @@ const nextConfig: NextConfig = {
     // Skip ESLint during production builds (including Vercel)
     ignoreDuringBuilds: true,
   },
+  experimental: {
+    optimizePackageImports: [
+      "lucide-react",
+    ],
+  },
 };
 
 export default nextConfig;

@@ -9,13 +9,23 @@ export function currencyLocale(currency: Settings["currency"]) {
   return CURRENCY_LOCALES[currency];
 }
 
+// Cache Intl.NumberFormat instances per currency+locale to avoid re-creating on every render
+const currencyFormatterCache: Record<string, Intl.NumberFormat> = Object.create(null);
+
 export function formatCurrency(value: number, currency: Settings["currency"]) {
   try {
-    return new Intl.NumberFormat(currencyLocale(currency), {
-      style: "currency",
-      currency,
-      maximumFractionDigits: currency === "IDR" ? 0 : 2,
-    }).format(value || 0);
+    const locale = currencyLocale(currency);
+    const key = `${locale}|${currency}`;
+    let formatter = currencyFormatterCache[key];
+    if (!formatter) {
+      formatter = new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency,
+        maximumFractionDigits: currency === "IDR" ? 0 : 2,
+      });
+      currencyFormatterCache[key] = formatter;
+    }
+    return formatter.format(value || 0);
   } catch {
     const prefixMap: Record<Settings["currency"], string> = {
       IDR: "Rp",

@@ -1,5 +1,3 @@
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas-pro";
 import type { Invoice, Company } from '@/lib/types';
 
 export async function exportInvoiceToPDF(
@@ -8,6 +6,11 @@ export async function exportInvoiceToPDF(
   company: Company,
   action: "save" | "print" = "save"
 ) {
+  // Lazy-load heavy libs to keep main bundle small
+  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+    import("jspdf"),
+    import("html2canvas-pro"),
+  ]);
   const scale = Math.min(2, window.devicePixelRatio || 1);
   const canvas = await html2canvas(sourceNode, {
     backgroundColor: "#ffffff",

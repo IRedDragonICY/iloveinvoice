@@ -16,39 +16,46 @@ interface NavigationProviderProps {
 }
 
 export function NavigationProvider({ children }: NavigationProviderProps) {
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
-    // Default to collapsed on smaller screens
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('sidebar-collapsed');
-      if (saved !== null) {
-        return JSON.parse(saved);
-      }
-      // Default to collapsed if screen is smaller than 1280px
-      return window.innerWidth < 1280;
-    }
-    return false;
-  });
-
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return window.innerWidth < 1024; // lg breakpoint
-    }
-    return false;
-  });
+  // IMPORTANT: Use deterministic SSR-safe defaults, then compute real values after mount
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const handleResize = () => {
-      const mobile = window.innerWidth < 1024;
-      setIsMobile(mobile);
-      
-      // Auto-collapse sidebar on medium screens
-      if (window.innerWidth < 1280 && window.innerWidth >= 1024) {
-        setIsSidebarCollapsed(true);
+    // Initialize values from window/localStorage AFTER mount to avoid hydration mismatch
+    const init = () => {
+      try {
+        const saved = localStorage.getItem('sidebar-collapsed');
+        const initialCollapsed = saved !== null ? JSON.parse(saved) : window.innerWidth < 1280;
+        setIsSidebarCollapsed(Boolean(initialCollapsed));
+      } catch {
+        // noop
       }
+      setIsMobile(window.innerWidth < 1024);
     };
 
+    let rafId = 0 as number | 0;
+    let lastWidth = window.innerWidth;
+    const handleResize = () => {
+      if (rafId) cancelAnimationFrame(rafId as number);
+      rafId = requestAnimationFrame(() => {
+        if (window.innerWidth === lastWidth) return;
+        lastWidth = window.innerWidth;
+        const mobile = window.innerWidth < 1024;
+        setIsMobile(mobile);
+
+        // Auto-collapse sidebar on medium screens
+        if (window.innerWidth < 1280 && window.innerWidth >= 1024) {
+          setIsSidebarCollapsed(true);
+        }
+      }) as unknown as number;
+    };
+
+    init();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId as number);
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   const toggleSidebar = () => {

@@ -7,7 +7,7 @@ import {
   Percent, DollarSign, Printer, Download
 } from 'lucide-react';
 import { Card, Row, TextField, TextArea, NumberField, MoneyField, Toggle } from '@/components/ui';
-import { InvoicePreview } from '@/components/invoice/InvoicePreview';
+import dynamic from 'next/dynamic';
 import { PageWrapper } from '@/components/shared/PageWrapper';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import { useDebounced } from '@/hooks/useDebounced';
@@ -20,6 +20,12 @@ import { compressImage, formatFileSize, isValidImageFile, checkLocalStorageSpace
 import type {
   Company, Product, DiscountType, InvoiceItem, Customer, Invoice, Settings
 } from '@/lib/types';
+
+const InvoicePreview = dynamic(() => import('@/components/invoice/InvoicePreview').then(m => m.InvoicePreview), {
+  ssr: false,
+  // light wrapper to avoid blocking the page
+  loading: () => null,
+});
 
 export function InvoiceClient() {
   const [settings] = usePersistentState<Settings>(STORAGE.settings, DEFAULTS.settings);
